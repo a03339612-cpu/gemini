@@ -1,0 +1,21 @@
+name: Delete Files
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Delete .env file
+        run: |
+          git rm -f .env
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+          git commit -m "Remove .env file"
+          git push
