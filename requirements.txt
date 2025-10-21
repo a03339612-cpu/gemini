@@ -1,4 +1,4 @@
-python-telegram-bot[persistence
+python-telegram-bot[persistence]
 python-dotenv
 google-generativeai
 requests
