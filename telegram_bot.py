@@ -6,6 +6,9 @@ import requests
 import json
 import asyncio
 import time
+import threading
+import http.server
+import socketserver
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.error import BadRequest
@@ -230,7 +233,6 @@ async def done_collecting(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.edit_message_text("Отлично! Теперь напишите, что нужно сделать с этими фото (например, 'помести человека со второго фото на фон с первого').")
     return AWAITING_COMBINE_PROMPT
 
-# ИЗМЕНЕНИЕ: Добавлена возможность редактирования
 async def handle_combine_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prompt = update.message.text
     await update.message.reply_text("🎨 Комбинирую изображения... Это может занять некоторое время.")
@@ -243,21 +245,17 @@ async def handle_combine_prompt(update: Update, context: ContextTypes.DEFAULT_TY
         
     result_image = await generate_combined_image(prompt, image_parts)
     
-    # Очищаем временные данные
     context.user_data.pop('combine_photos', None)
     context.user_data.pop('control_message_id', None)
 
     if result_image:
-        # Сохраняем результат для редактирования
         context.user_data['last_generated_image_bytes'] = result_image.getvalue()
         context.user_data['last_generated_image_prompt'] = prompt
-
         keyboard = [
             [InlineKeyboardButton("✏️ Редактировать", callback_data="edit_image")],
             [InlineKeyboardButton("🏠 На главное меню", callback_data="back_to_main")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-
         await update.message.reply_photo(
             photo=BytesIO(context.user_data['last_generated_image_bytes']), 
             caption=f"Результат вашего творчества!\n\nЗапрос: `{prompt}`",
@@ -267,7 +265,6 @@ async def handle_combine_prompt(update: Update, context: ContextTypes.DEFAULT_TY
     else:
         await update.message.reply_text("Не удалось скомбинировать изображения.")
         return await start(update, context)
-
 
 async def handle_text_prompt_for_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     prompt = update.message.text
@@ -369,6 +366,23 @@ async def handle_chat_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(response_text)
     return CHAT_WITH_AI
 
+# НОВАЯ ФУНКЦИЯ ДЛЯ ВЕБ-СЕРВЕРА
+def run_health_check_server():
+    """Запускает простой HTTP-сервер для проверки состояния Render."""
+    # Render предоставляет порт в переменной окружения PORT
+    PORT = int(os.environ.get("PORT", 8080))
+    
+    class HealthCheckHandler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header("Content-type", "text/plain")
+            self.end_headers()
+            self.wfile.write(b"Bot is alive!")
+
+    with socketserver.TCPServer(("", PORT), HealthCheckHandler) as httpd:
+        logger.info(f"Health check server running on port {PORT}")
+        httpd.serve_forever()
+
 def main() -> None:
     persistence = PicklePersistence(filepath="bot_persistence")
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).persistence(persistence).build()
@@ -399,6 +413,12 @@ def main() -> None:
         persistent=True,
     )
     application.add_handler(conv_handler)
+    
+    # НОВЫЙ БЛОК: Запуск веб-сервера в отдельном потоке
+    health_thread = threading.Thread(target=run_health_check_server)
+    health_thread.daemon = True
+    health_thread.start()
+
     print("Бот запущен...")
     application.run_polling()
 
